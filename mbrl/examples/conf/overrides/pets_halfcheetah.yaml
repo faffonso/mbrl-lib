@@ -3,7 +3,7 @@ env: "pets_halfcheetah"
 term_fn: "no_termination"
 obs_process_fn: mbrl.env.pets_halfcheetah.HalfCheetahEnv.preprocess_fn
 learned_rewards: false
-num_steps: 300000
+num_steps: 150000
 trial_length: 1000
 
 num_elites: 5
@@ -17,8 +17,8 @@ patience: 12
 num_epochs_train_model: 12
 
 planning_horizon: 30
-cem_num_iters: 5
-cem_elite_ratio: 0.16
-cem_population_size: 400
-cem_alpha: 0.12
+cem_num_iters: 7
+cem_elite_ratio: 0.18
+cem_population_size: 550
+cem_alpha: 0.16
 cem_clipped_normal: false

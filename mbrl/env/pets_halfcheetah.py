@@ -17,7 +17,7 @@ class HalfCheetahEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         "render_fps": 20,
     }
 
-    def __init__(self, render_mode: str = None):
+    def __init__(self, render_mode: str = "human"):
         self.prev_qpos = None
         dir_path = os.path.dirname(os.path.realpath(__file__))
         observation_space = Box(low=-np.inf, high=np.inf, shape=(18,), dtype=np.float64)
@@ -34,6 +34,9 @@ class HalfCheetahEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         self.prev_qpos = np.copy(self.data.qpos.flat)
         self.do_simulation(action, self.frame_skip)
         ob = self._get_obs()
+        # print(f'Joints vel {self.data.qpos[:1]}')
+        # print(f'Joints pos {self.data.qpos[:1]}')
+        # print(f'Joints effort {self.data.qvel}')
 
         reward = HalfCheetahEnv.get_reward(ob, action)
 

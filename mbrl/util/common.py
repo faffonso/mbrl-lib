@@ -83,9 +83,15 @@ def create_one_dim_tr_model(
         model_cfg.in_size = obs_shape[0] + (act_shape[0] if act_shape else 1)
     if model_cfg.get("out_size", None) is None:
         model_cfg.out_size = obs_shape[0] + int(cfg.algorithm.learned_rewards)
-
+    if model_cfg.get("act_size", None) is None:
+        model_cfg.act_size = (act_shape[0] if act_shape else 1)   
     # Now instantiate the model
+    print(f'Obs size {obs_shape[0]}')
+    print(f'Act size {act_shape[0]}')
+    print(f'Learned rewards {int(cfg.algorithm.learned_rewards)}')
+    print(cfg.dynamics_model)
     model = hydra.utils.instantiate(cfg.dynamics_model)
+    print(model)
 
     name_obs_process_fn = cfg.overrides.get("obs_process_fn", None)
     if name_obs_process_fn:
@@ -104,6 +110,8 @@ def create_one_dim_tr_model(
         no_delta_list=cfg.overrides.get("no_delta_list", None),
         num_elites=cfg.overrides.get("num_elites", None),
     )
+    model_dir = '/home/faffonso/Documents/mbrl-lib/exp/pets/default/pets_halfcheetah/2024.05.21/004901'
+
     if model_dir:
         dynamics_model.load(model_dir)
 

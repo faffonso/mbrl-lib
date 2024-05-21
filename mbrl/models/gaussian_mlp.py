@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import hydra
 import omegaconf
+from collections import OrderedDict
 import torch
 from torch import nn as nn
 from torch.nn import functional as F
@@ -16,6 +17,101 @@ import mbrl.util.math
 from .model import Ensemble
 from .util import EnsembleLinearLayer, truncated_normal_init
 
+class DeepKoopman(Ensemble):
+    def __init__(
+        self,
+        in_size: int,
+        out_size: int,
+        act_size: int,
+        affine: bool,
+        device: Union[str, torch.device],
+        Nkoopman: int = 12,
+        num_layers: int = 4,
+        ensemble_size: int = 1,
+        hid_size: int = 200,        
+        deterministic: bool = False,
+        propagation_method: Optional[str] = None,
+        learn_logvar_bounds: bool = False,
+        activation_fn_cfg: Optional[Union[Dict, omegaconf.DictConfig]] = None,   
+        verbose: bool = True   
+    ):
+
+        super().__init__(
+            ensemble_size, device, propagation_method, deterministic=deterministic
+        )
+
+        self.Nkoopman = Nkoopman
+        self.out_size = out_size
+        self.act_size = act_size
+        self.verbose  = verbose
+
+        enc_layers  = [in_size]+[hid_size]*num_layers+[2*in_size]
+        bic_layers = [in_size]+[hid_size]*num_layers+[act_size]
+
+    
+        ELayers = OrderedDict()
+        for layer_i in range(len(enc_layers)-1):
+            ELayers["linear_{}".format(layer_i)] = nn.Linear(enc_layers[layer_i],enc_layers[layer_i+1])
+            if layer_i != len(enc_layers)-2:
+                ELayers["relu_{}".format(layer_i)] = nn.ReLU()
+        
+        BLayers = OrderedDict()
+        for layer_i in range(len(bic_layers)-1):
+            BLayers["linear_{}".format(layer_i)] = nn.Linear(bic_layers[layer_i],bic_layers[layer_i+1])
+            if layer_i != len(bic_layers)-2:
+                BLayers["relu_{}".format(layer_i)] = nn.ReLU()
+
+        self.encode_net = nn.Sequential(ELayers)
+        self.bilinear_net = nn.Sequential(BLayers)         
+
+        self.lA = nn.Linear(Nkoopman,Nkoopman,bias=False)
+        self.lA.weight.data = self._gaussian_init_(Nkoopman, std=1)
+        U, _, V = torch.svd(self.lA.weight.data)
+        self.lA.weight.data = torch.mm(U, V.t()) * 0.9
+
+        self.lB = nn.Linear(bic_layers[-1],Nkoopman,bias=False)
+
+        if verbose:
+            print("Deep Koopmam network")
+            print(ELayers)
+            print(BLayers)
+            print(self)
+
+    def encode(self,x):
+        return torch.cat([x,self.encode_net(x)],axis=-1)
+    
+    def bicode(self,x,u):
+        gu = self.bilinear_net(x)
+        return gu*u
+    
+
+    def forward(self,x,b):
+        return self.lA(x)+self.lB(b)
+
+    def _gaussian_init_(self, n_units, std=1):    
+        sampler = torch.distributions.Normal(torch.Tensor([0]), torch.Tensor([std/n_units]))
+        Omega = sampler.sample((n_units, n_units))[..., 0]  
+        return Omega
+
+    # TODO
+    def loss(
+        self,
+        model_in: torch.Tensor,
+        target: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        pass
+    
+    # TODO
+    def eval_score(
+        self, model_in: torch.Tensor, target: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        pass
+    
+    # TODO
+    def sample_propagation_indices(
+        self, batch_size: int, rng: torch.Generator
+    ) -> torch.Tensor:
+        pass
 
 class GaussianMLP(Ensemble):
     """Implements an ensemble of multi-layer perceptrons each modeling a Gaussian distribution.
@@ -70,6 +166,8 @@ class GaussianMLP(Ensemble):
         self,
         in_size: int,
         out_size: int,
+        act_size: int,
+        affine: bool,
         device: Union[str, torch.device],
         num_layers: int = 4,
         ensemble_size: int = 1,
@@ -85,6 +183,9 @@ class GaussianMLP(Ensemble):
 
         self.in_size = in_size
         self.out_size = out_size
+        self.act_size = act_size
+
+        self.affine = affine
 
         def create_activation():
             if activation_fn_cfg is None:
@@ -99,7 +200,7 @@ class GaussianMLP(Ensemble):
             return EnsembleLinearLayer(ensemble_size, l_in, l_out)
 
         hidden_layers = [
-            nn.Sequential(create_linear_layer(in_size, hid_size), create_activation())
+            nn.Sequential(create_linear_layer( (in_size - act_size if affine else in_size) , hid_size), create_activation())
         ]
         for i in range(num_layers - 1):
             hidden_layers.append(
@@ -111,9 +212,15 @@ class GaussianMLP(Ensemble):
         self.hidden_layers = nn.Sequential(*hidden_layers)
 
         if deterministic:
-            self.mean_and_logvar = create_linear_layer(hid_size, out_size)
+            if (affine):
+                self.mean_and_logvar = create_linear_layer(hid_size, out_size + out_size * act_size)
+            else:
+                self.mean_and_logvar = create_linear_layer(hid_size, out_size)
         else:
-            self.mean_and_logvar = create_linear_layer(hid_size, 2 * out_size)
+            if (affine):
+                self.mean_and_logvar = create_linear_layer(hid_size, 2 * (out_size + out_size * act_size))
+            else:
+                self.mean_and_logvar = create_linear_layer(hid_size, 2 * out_size)
             self.min_logvar = nn.Parameter(
                 -10 * torch.ones(1, out_size), requires_grad=learn_logvar_bounds
             )
@@ -140,15 +247,71 @@ class GaussianMLP(Ensemble):
     def _default_forward(
         self, x: torch.Tensor, only_elite: bool = False, **_kwargs
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        dim = x.dim()
+
+        if (dim == 2):
+            B, _ = x.shape
+        elif (dim == 3):
+            _, B, _ = x.shape
+
+        x_in  = x[..., :(self.in_size - self.act_size)]
+        x_act = x[..., (self.in_size - self.act_size):]
+
         self._maybe_toggle_layers_use_only_elite(only_elite)
-        x = self.hidden_layers(x)
+
+        if (self.affine):
+            x = self.hidden_layers(x_in)
+        else:
+            x = self.hidden_layers(x)  
+
         mean_and_logvar = self.mean_and_logvar(x)
+
         self._maybe_toggle_layers_use_only_elite(only_elite)
         if self.deterministic:
-            return mean_and_logvar, None
+            if (self.affine == False):
+                return mean_and_logvar, None
+            
+            f_s = mean_and_logvar[..., :self.out_size]
+            g_s = mean_and_logvar[..., self.out_size:]
+            g_s = g_s.view(-1, B, self.out_size, self.act_size)
+
+            if (dim == 2):
+                x_act = x_act[None, :].repeat(f_s.shape[0], 1, 1)
+
+            x_act = x_act.view(-1, self.act_size, 1)
+            g_s = g_s.view(-1, self.out_size, self.act_size)
+            
+            x_out = f_s + torch.bmm(g_s, x_act).view(-1, B, self.out_size)
+
+            return x_out, None
+        
         else:
-            mean = mean_and_logvar[..., : self.out_size]
-            logvar = mean_and_logvar[..., self.out_size :]
+            if (self.affine):
+                mean = mean_and_logvar[..., : (self.out_size*(1 + self.act_size))]
+                logvar = mean_and_logvar[..., (self.out_size*(1 + self.act_size)) :]
+
+                f_s = mean[..., :self.out_size]
+                g_s = mean[..., self.out_size:]
+                log_f_s = logvar[..., :self.out_size]
+                log_g_s = logvar[..., self.out_size:]
+
+                if (dim == 2):
+                    x_act = x_act[None, :].repeat(f_s.shape[0], 1, 1)
+
+                x_act = x_act.view(-1, self.act_size, 1)
+                
+                g_s = g_s.view(-1, B, self.out_size, self.act_size)
+                g_s = g_s.view(-1, self.out_size, self.act_size)
+                
+                log_g_s = log_g_s.view(-1, B, self.out_size, self.act_size)
+                log_g_s =  log_g_s.view(-1, self.out_size, self.act_size)
+
+                mean = f_s + torch.bmm(g_s, x_act).view(-1, B, self.out_size)
+                logvar = torch.log(torch.exp(log_f_s) + torch.bmm(torch.exp(log_g_s), x_act.pow(2)).view(-1, B, self.out_size))
+            else:
+                mean = mean_and_logvar[..., :self.out_size]
+                logvar = mean_and_logvar[..., self.out_size:]
+                
             logvar = self.max_logvar - F.softplus(self.max_logvar - logvar)
             logvar = self.min_logvar + F.softplus(logvar - self.min_logvar)
             return mean, logvar

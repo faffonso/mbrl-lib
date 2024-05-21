@@ -12,19 +12,33 @@ import mbrl.algorithms.pets as pets
 import mbrl.algorithms.planet as planet
 import mbrl.util.env
 
+import mbrl.models.gaussian_mlp as model
 
 @hydra.main(config_path="conf", config_name="main")
 def run(cfg: omegaconf.DictConfig):
-    env, term_fn, reward_fn = mbrl.util.env.EnvHandler.make_env(cfg)
-    np.random.seed(cfg.seed)
-    torch.manual_seed(cfg.seed)
-    if cfg.algorithm.name == "pets":
-        return pets.train(env, term_fn, reward_fn, cfg)
-    if cfg.algorithm.name == "mbpo":
-        test_env, *_ = mbrl.util.env.EnvHandler.make_env(cfg)
-        return mbpo.train(env, test_env, term_fn, cfg)
-    if cfg.algorithm.name == "planet":
-        return planet.train(env, cfg)
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
+
+    nn = model.DeepKoopman(
+        18,
+        12,
+        6,
+        False,
+        device
+    )
+
+    # env, term_fn, reward_fn = mbrl.util.env.EnvHandler.make_env(cfg)
+    # np.random.seed(cfg.seed)
+    # torch.manual_seed(cfg.seed)
+    # if cfg.algorithm.name == "pets":
+    #     return pets.train(env, term_fn, reward_fn, cfg)
+    # if cfg.algorithm.name == "mbpo":
+    #     test_env, *_ = mbrl.util.env.EnvHandler.make_env(cfg)
+    #     return mbpo.train(env, test_env, term_fn, cfg)
+    # if cfg.algorithm.name == "planet":
+    #     return planet.train(env, cfg)
 
 
 if __name__ == "__main__":

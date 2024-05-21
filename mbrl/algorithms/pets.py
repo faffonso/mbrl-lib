@@ -30,7 +30,8 @@ def train(
     work_dir: Optional[str] = None,
 ) -> np.float32:
     # ------------------- Initialization -------------------
-    debug_mode = cfg.get("debug_mode", False)
+    # debug_mode = cfg.get("debug_mode", True)
+    debug_mode = True
 
     obs_shape = env.observation_space.shape
     act_shape = env.action_space.shape
@@ -129,7 +130,7 @@ def train(
             env_steps += 1
 
             if debug_mode:
-                print(f"Step {env_steps}: Reward {reward:.3f}.")
+                print(f"Step {env_steps}: Reward {reward:.3f}.", end='\r')
 
         if logger is not None:
             logger.log_data(
