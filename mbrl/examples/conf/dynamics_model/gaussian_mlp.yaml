@@ -6,6 +6,6 @@ in_size: ???
 out_size: ???
 ensemble_size: 1
 hid_size: 200
-deterministic: false
+deterministic: true
 activation_fn_cfg:
   _target_: torch.nn.SiLU

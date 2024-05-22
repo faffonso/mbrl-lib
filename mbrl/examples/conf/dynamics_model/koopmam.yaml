@@ -1,0 +1,15 @@
+# @package _group_
+_target_: mbrl.models.DeepKoopman
+device: ${device}
+num_layers: 4
+in_size: ???
+out_size: ???
+act_size: ???
+affine: true
+ensemble_size: 5
+hid_size: 120
+deterministic: true
+propagation_method: random_model
+learn_logvar_bounds: false  # so far this works better
+activation_fn_cfg:
+  _target_: torch.nn.SiLU
