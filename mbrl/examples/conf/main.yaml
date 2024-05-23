@@ -1,6 +1,6 @@
 defaults:
   - algorithm: pets
-  - dynamics_model: koopmam
+  - dynamics_model: koopman
   - overrides: pets_cartpole
   - action_optimizer: cem
 

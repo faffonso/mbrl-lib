@@ -1,0 +1,11 @@
+# @package _group_
+_target_: mbrl.models.DeepKoopman
+device: ${device}
+num_layers: 4
+in_size: ???
+out_size: ???
+act_size: ???
+enc_size: 8
+hid_size: 128
+ensemble_size: 2
+propagation_method: random_model

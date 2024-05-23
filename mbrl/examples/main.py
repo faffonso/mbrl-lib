@@ -12,8 +12,6 @@ import mbrl.algorithms.pets as pets
 import mbrl.algorithms.planet as planet
 import mbrl.util.env
 
-import mbrl.models.koopmam as model
-
 @hydra.main(config_path="conf", config_name="main")
 def run(cfg: omegaconf.DictConfig):
     # if torch.cuda.is_available():
