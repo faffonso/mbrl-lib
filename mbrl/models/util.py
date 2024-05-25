@@ -60,6 +60,12 @@ class EnsembleLinearLayer(nn.Module):
         else:
             xw = x.matmul(self.weight)
             if self.use_bias:
+                # print("COUNT")
+                # print(f' x = {x.shape}')
+                # print(f' w = {self.weight.shape}')
+                # print(f' b = {self.bias.shape}')
+                # print(f' xb = {xw.shape}')
+                # print(f' xw = {(xw + self.bias).shape}')
                 return xw + self.bias
             else:
                 return xw
