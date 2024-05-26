@@ -184,7 +184,7 @@ class CEMOptimizer(Optimizer):
             if best_values[0] > best_value:
                 best_value = best_values[0]
                 best_solution = population[elite_idx[0]].clone()
-
+                
         return mu if self.return_mean_elites else best_solution
 
 
@@ -560,6 +560,7 @@ class TrajectoryOptimizer:
             x0=self.previous_solution,
             callback=callback,
         )
+        
         if self.keep_last_solution:
             self.previous_solution = best_solution.roll(-self.replan_freq, dims=0)
             # Note that initial_solution[i] is the same for all values of [i],

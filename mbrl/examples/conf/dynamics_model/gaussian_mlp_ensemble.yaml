@@ -5,7 +5,7 @@ num_layers: 4
 in_size: ???
 out_size: ???
 act_size: ???
-affine: true
+affine: false
 ensemble_size: 7
 hid_size: 350
 deterministic: false

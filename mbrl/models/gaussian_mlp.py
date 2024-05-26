@@ -164,21 +164,14 @@ class GaussianMLP(Ensemble):
 
         self._maybe_toggle_layers_use_only_elite(only_elite)
 
-        print("DEBUG")
-
-        print(x.shape)
-        print(x_in.shape)
-
         if (self.affine):
             x = self.hidden_layers(x_in)
         else:
             x = self.hidden_layers(x)  
 
-        print(x.shape)
 
         mean_and_logvar = self.mean_and_logvar(x)
 
-        print(mean_and_logvar.shape)
 
         self._maybe_toggle_layers_use_only_elite(only_elite)
         if self.deterministic:
@@ -434,13 +427,8 @@ class GaussianMLP(Ensemble):
         assert model_in.ndim == 2 and target.ndim == 2
         with torch.no_grad():
 
-            print("Indo FW")
             pred_mean, _ = self.forward(model_in, use_propagation=False)
 
-            print("Voltando FW")
-            print(model_in.shape)
-            print(target.shape)
-            print(pred_mean.shape)
 
             target = target.repeat((self.num_members, 1, 1))
             return F.mse_loss(pred_mean, target, reduction="none"), {}

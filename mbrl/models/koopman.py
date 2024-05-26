@@ -38,6 +38,7 @@ class DeepKoopman(Ensemble):
             ensemble_size, device, propagation_method, deterministic=True
         )
 
+        self.debug_c = 0
         koopman =  enc_size + out_size
 
         self.enc_size = enc_size
@@ -95,69 +96,35 @@ class DeepKoopman(Ensemble):
         self.to(self.device)
 
     def _encode(self, x: torch.Tensor, dim: int):
-        if (dim == 2):
-            enc = self.enc_hidden_layers(x[0, :])
-        elif (dim == 3):
-            enc = self.enc_hidden_layers(x[:, 0, :])
-
+        enc = self.enc_hidden_layers(x[:, 0, :] if dim == 3 else x[0, :])
         enc = self.encode_net(enc)[:, 0, :][:, None, :]
-        
-        if (dim == 2):
-            x = x[0, :].repeat((self.num_members, 1, 1))
-        elif (dim == 3):
-            x = x[:, 0, :][:, None, :]
 
-        # print("Encode")
-        # print(enc.shape)
-        # print(x.shape)
-        # print(torch.cat([x, enc], axis=-1).shape)
-
+        x = x[:, 0, :][:, None, :] if dim == 3 else x[0, :].repeat((self.num_members, 1, 1))
         return torch.cat([x, enc], axis=-1)
 
     def _bicode(self, x: torch.Tensor, u: torch.Tensor):
         g_x = self.bic_hidden_layers(x[..., :self.out_size])
         return self.bicode_net(g_x) * u
 
-    def _default_forward(
-        self, x: torch.Tensor, only_elite: bool = False, **_kwargs
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        
+    # TODO: Implement factorial to split batchsize
+    def _default_forward(self, x: torch.Tensor, only_elite: bool = False, **_kwargs) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         x_state = x[..., :self.out_size]
         x_act = x[..., self.out_size:]
 
         dim = x.dim()
-        if (dim == 2):
-            B = x.shape[0]
-        elif (dim == 3):
-            B = x.shape[1]
-
-        # print("FW Input")
-        # print(x.shape)
-        # print(x_state.shape)
-        # print(x_act.shape)
-
-        # print("Encoding")
+        B = x.shape[0] if dim == 2 else x.shape[1]
 
         z_k = self._encode(x_state, dim)
 
-        Z = torch.empty(self.num_members, B, self.out_size).to(self.device)
-        #Z[:, 0, :] = z_k[:, 0, :self.out_size]
-
-        #print(f'Initial z: {z_k.shape}')
+        Z = torch.empty(self.num_members, B, self.out_size, device=self.device)
 
         for i in range(B):
-            act = x_act[i, :] if dim == 2 else x_act[:, i, :]
-
+            act = x_act[i] if dim == 2 else x_act[:, i]
             u_k = self._bicode(z_k, act)
-
-            # print(act.shape)
-
-            z_k = (self.lA(z_k) + self.lB(u_k))
-            Z[:, i, :] =  z_k[:, 0, :self.out_size]
-            #print(f'Stage {i}: {z_k}')
+            z_k = self.lA(z_k) + self.lB(u_k)
+            Z[:, i, :] = z_k[:, 0, :self.out_size]
 
         return Z, None
-
 
 
     # FIXME:
@@ -221,6 +188,8 @@ class DeepKoopman(Ensemble):
 
         """
         if use_propagation:
+            print(self.debug_c)
+            self.debug_c += 1
             return self._forward_ensemble(
                 x, rng=rng, propagation_indices=propagation_indices
             )
@@ -271,14 +240,21 @@ class DeepKoopman(Ensemble):
     def _forward_from_indices(
         self, x: torch.Tensor, model_shuffle_indices: torch.Tensor
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        _, batch_size, _ = x.shape
+        _, batch_size, _ = x.shape  
 
         num_models = (
             len(self.elite_models) if self.elite_models is not None else len(self)
         )
+
         shuffled_x = x[:, model_shuffle_indices, ...].view(
             num_models, batch_size // num_models, -1
         )
+
+        # print("TEM QUE SER AQUI")
+        # print(num_models)
+        # print(model_shuffle_indices.shape)
+        # print(x.shape)
+        # print(shuffled_x.shape)
 
         mean, logvar = self._default_forward(shuffled_x, only_elite=True)
         # note that mean and logvar are shuffled
@@ -368,4 +344,4 @@ class DeepKoopman(Ensemble):
             )
         # rng causes segmentation fault, see https://github.com/pytorch/pytorch/issues/44714
         return torch.randperm(batch_size, device=self.device)
-
+    

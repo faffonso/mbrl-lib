@@ -9,16 +9,16 @@ trial_length: 1000
 num_elites: 2
 model_lr: 0.00028
 model_wd: 0.00010
-model_batch_size: 8
+model_batch_size: 32
 validation_ratio: 0
 no_delta_list: [ 0 ]
 freq_train_model: 1000
 patience: 12
 num_epochs_train_model: 12
 
-planning_horizon: 30
+planning_horizon: 20
 cem_num_iters: 7
 cem_elite_ratio: 0.18
-cem_population_size: 200
+cem_population_size: 50
 cem_alpha: 0.16
-cem_clipped_normal: false
+cem_clipped_normal: true
