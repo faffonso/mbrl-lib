@@ -130,7 +130,7 @@ def train(
             env_steps += 1
 
             if debug_mode:
-                print(f"Step {env_steps}: Reward {reward:.3f}.")
+                print(f"Step {env_steps}: Reward {reward:.3f}.", end="\r")
 
         if logger is not None:
             logger.log_data(

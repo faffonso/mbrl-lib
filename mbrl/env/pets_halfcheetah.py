@@ -17,7 +17,7 @@ class HalfCheetahEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         "render_fps": 20,
     }
 
-    def __init__(self, render_mode: str = None):
+    def __init__(self, render_mode: str = "human"):
         self.prev_qpos = None
         dir_path = os.path.dirname(os.path.realpath(__file__))
         observation_space = Box(low=-np.inf, high=np.inf, shape=(18,), dtype=np.float64)

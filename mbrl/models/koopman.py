@@ -35,7 +35,7 @@ class DeepKoopman(Ensemble):
     ):
 
         super().__init__(
-            ensemble_size, device, propagation_method, deterministic=True
+            ensemble_size, device, propagation_method, deterministic=False
         )
 
         self.debug_c = 0
@@ -47,9 +47,9 @@ class DeepKoopman(Ensemble):
         self.act_size = act_size
         self.verbose  = verbose
         self.koopman = koopman
+        self.deterministic = False
 
         self.elite_models: List[int] = None
-
 
         def create_activation():
             if activation_fn_cfg is None:
@@ -63,12 +63,23 @@ class DeepKoopman(Ensemble):
         def create_linear_layer(l_in, l_out):
             return EnsembleLinearLayer(ensemble_size, l_in, l_out)
 
+        self.min_logvar = nn.Parameter(
+            -10 * torch.ones(1, out_size), requires_grad=learn_logvar_bounds
+        )
+        self.max_logvar = nn.Parameter(
+            0.5 * torch.ones(1, out_size), requires_grad=learn_logvar_bounds
+        )
+
         enc_hidden_layers = [
             nn.Sequential(create_linear_layer(out_size, hid_size), create_activation())
         ]
         bic_hidden_layers = [
             nn.Sequential(create_linear_layer(out_size, hid_size), create_activation())
         ]
+        cov_hidden_layers = [
+            nn.Sequential(create_linear_layer(enc_size+act_size, hid_size), create_activation())
+        ]
+
         for i in range(num_layers - 1):
             enc_hidden_layers.append(
                 nn.Sequential(
@@ -83,51 +94,77 @@ class DeepKoopman(Ensemble):
                     create_activation(),
                 )
             )
+        for i in range(num_layers - 1):
+            cov_hidden_layers.append(
+                nn.Sequential(
+                    create_linear_layer(hid_size, hid_size),
+                    create_activation(),
+                )
+            )
+
         self.enc_hidden_layers = nn.Sequential(*enc_hidden_layers)
         self.bic_hidden_layers = nn.Sequential(*bic_hidden_layers)
+        self.cov_hidden_layers = nn.Sequential(*cov_hidden_layers)
 
-        self.encode_net = create_linear_layer(hid_size, enc_size)
-        self.bicode_net = create_linear_layer(hid_size, act_size)
+        self.encode_net = create_linear_layer(hid_size, 2 * enc_size)
+        self.bicode_net = create_linear_layer(hid_size, 2 * act_size)
+        self.covariance_net = create_linear_layer(hid_size, out_size)
 
         self.lA = create_linear_layer(koopman, koopman)
         self.lB = create_linear_layer(act_size, koopman)
+        self.lC = create_linear_layer(enc_size, out_size)
+        self.lD = create_linear_layer(act_size, out_size)
 
         self.apply(truncated_normal_init)
         self.to(self.device)
 
-    def _encode(self, x: torch.Tensor, dim: int):
-        enc = self.enc_hidden_layers(x[:, 0, :] if dim == 3 else x[0, :])
-        enc = self.encode_net(enc)[:, 0, :][:, None, :]
+    def _maybe_toggle_layers_use_only_elite(self, only_elite: bool):
+        if self.elite_models is None:
+            return
+        if self.num_members > 1 and only_elite:
+            for layer in self.hidden_layers:
+                # each layer is (linear layer, activation_func)
+                layer[0].set_elite(self.elite_models)
+                layer[0].toggle_use_only_elite()
+            self.mean_and_logvar.set_elite(self.elite_models)
+            self.mean_and_logvar.toggle_use_only_elite()
 
-        x = x[:, 0, :][:, None, :] if dim == 3 else x[0, :].repeat((self.num_members, 1, 1))
+    def _encode(self, x: torch.Tensor, dim: int, trajectory: bool = True):
+        enc = self.enc_hidden_layers(x)
+        enc = self.encode_net(enc)
+
+        x = x if dim == 3 else x.repeat((self.num_members, 1, 1))
+
         return torch.cat([x, enc], axis=-1)
 
     def _bicode(self, x: torch.Tensor, u: torch.Tensor):
         g_x = self.bic_hidden_layers(x[..., :self.out_size])
-        return self.bicode_net(g_x) * u
+        return self.bicode_net(g_x)[..., self.act_size:] * u, self.bicode_net(g_x)[..., :self.act_size] * u
 
-    # TODO: Implement factorial to split batchsize
-    def _default_forward(self, x: torch.Tensor, only_elite: bool = False, **_kwargs) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    #TODO: Change logvar for a function, think about input
+    def _default_forward(self, x: torch.Tensor, only_elite: bool = False, trajectory = True, **_kwargs) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         x_state = x[..., :self.out_size]
         x_act = x[..., self.out_size:]
 
         dim = x.dim()
         B = x.shape[0] if dim == 2 else x.shape[1]
 
-        z_k = self._encode(x_state, dim)
+        z_k = self._encode(x_state, dim, trajectory = True)
 
-        Z = torch.empty(self.num_members, B, self.out_size, device=self.device)
+        z_mean = z_k[..., :self.enc_size+self.out_size]
+        z_logvar = z_k[..., self.enc_size+self.out_size:]
 
-        for i in range(B):
-            act = x_act[i] if dim == 2 else x_act[:, i]
-            u_k = self._bicode(z_k, act)
-            z_k = self.lA(z_k) + self.lB(u_k)
-            Z[:, i, :] = z_k[:, 0, :self.out_size]
+        u_mean, u_logvar = self._bicode(z_mean, x_act)
 
-        return Z, None
+        mean = self.lA(z_mean) + self.lB(u_mean)
 
+        logvar = self.lC(z_logvar) + self.lD(u_logvar)
 
-    # FIXME:
+        logvar = self.max_logvar - F.softplus(self.max_logvar - logvar)
+        logvar = self.min_logvar + F.softplus(logvar - self.min_logvar)
+
+        return mean[..., :self.out_size], logvar
+
     def forward(  # type: ignore
         self,
         x: torch.Tensor,
@@ -188,8 +225,8 @@ class DeepKoopman(Ensemble):
 
         """
         if use_propagation:
-            print(self.debug_c)
-            self.debug_c += 1
+            # print(self.debug_c)
+            # self.debug_c += 1
             return self._forward_ensemble(
                 x, rng=rng, propagation_indices=propagation_indices
             )
@@ -267,6 +304,30 @@ class DeepKoopman(Ensemble):
 
         return mean, logvar
 
+    def _mse_loss(self, model_in: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        assert model_in.ndim == target.ndim
+        if model_in.ndim == 2:  # add model dimension
+            model_in = model_in.unsqueeze(0)
+            target = target.unsqueeze(0)
+        pred_mean, _ = self.forward(model_in, use_propagation=False)
+        return F.mse_loss(pred_mean, target, reduction="none").sum((1, 2)).sum()
+
+    def _nll_loss(self, model_in: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        assert model_in.ndim == target.ndim
+        if model_in.ndim == 2:  # add ensemble dimension
+            model_in = model_in.unsqueeze(0)
+            target = target.unsqueeze(0)
+        pred_mean, pred_logvar = self.forward(model_in, use_propagation=False)
+        if target.shape[0] != self.num_members:
+            target = target.repeat(self.num_members, 1, 1)
+        nll = (
+            mbrl.util.math.gaussian_nll(pred_mean, pred_logvar, target, reduce=False)
+            .mean((1, 2))  # average over batch and target dimension
+            .sum()
+        )  # sum over ensemble dimension
+        nll += 0.01 * (self.max_logvar.sum() - self.min_logvar.sum())
+        return nll
+
     def loss(
         self,
         model_in: torch.Tensor,
@@ -292,15 +353,10 @@ class DeepKoopman(Ensemble):
             the model over the given input/target. If the model is an ensemble, returns
             the average over all models.
         """
-        assert model_in.ndim == target.ndim
-
-        if model_in.ndim == 2:  # add model dimension
-            model_in = model_in.unsqueeze(0)
-            target = target.unsqueeze(0)
-
-        pred_mean, _ = self.forward(model_in, use_propagation=False)
-
-        return F.mse_loss(pred_mean, target, reduction="none").sum((1, 2)).sum(), {}
+        if self.deterministic:
+            return self._mse_loss(model_in, target), {}
+        else:
+            return self._nll_loss(model_in, target), {}
 
     def eval_score(  # type: ignore
         self, model_in: torch.Tensor, target: Optional[torch.Tensor] = None

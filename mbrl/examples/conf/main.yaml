@@ -7,7 +7,7 @@ defaults:
 seed: 0
 device: "cuda:0"
 log_frequency_agent: 1000
-save_video: false
+save_video: true
 debug_mode: false
 
 experiment: default

@@ -5,9 +5,9 @@ num_layers: 4
 in_size: ???
 out_size: ???
 act_size: ???
-enc_size: 8
-hid_size: 128
-ensemble_size: 10
+enc_size: 12
+hid_size: 200
+ensemble_size: 8
 propagation_method: random_model
 learn_logvar_bounds: false  # so far this works better
 

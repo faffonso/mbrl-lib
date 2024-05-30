@@ -17,4 +17,4 @@ initial_exploration_steps: ${overrides.trial_length}
 freq_train_model: ${overrides.freq_train_model}
 learned_rewards: ${overrides.learned_rewards}
 
-num_particles: 10
+num_particles: 20

@@ -6,8 +6,8 @@ in_size: ???
 out_size: ???
 act_size: ???
 affine: false
-ensemble_size: 7
-hid_size: 350
+ensemble_size: 10
+hid_size: 200
 deterministic: false
 propagation_method: random_model
 learn_logvar_bounds: false  # so far this works better
