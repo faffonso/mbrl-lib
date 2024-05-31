@@ -5,8 +5,8 @@ num_layers: 4
 in_size: ???
 out_size: ???
 act_size: ???
-affine: false
-ensemble_size: 10
+affine: true
+ensemble_size: 7
 hid_size: 200
 deterministic: false
 propagation_method: random_model

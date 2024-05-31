@@ -30,16 +30,17 @@ class DeepKoopman(Ensemble):
         hid_size: int = 200,        
         propagation_method: Optional[str] = None,
         learn_logvar_bounds: bool = False,
+        deterministic: bool = False,
         activation_fn_cfg: Optional[Union[Dict, omegaconf.DictConfig]] = None,   
         verbose: bool = False   
     ):
 
         super().__init__(
-            ensemble_size, device, propagation_method, deterministic=False
+            ensemble_size, device, propagation_method, deterministic=deterministic
         )
 
         self.debug_c = 0
-        koopman =  enc_size + out_size
+        koopman =  enc_size
 
         self.enc_size = enc_size
         self.in_size  = in_size
@@ -47,7 +48,7 @@ class DeepKoopman(Ensemble):
         self.act_size = act_size
         self.verbose  = verbose
         self.koopman = koopman
-        self.deterministic = False
+        self.deterministic = deterministic
 
         self.elite_models: List[int] = None
 
@@ -76,7 +77,7 @@ class DeepKoopman(Ensemble):
         bic_hidden_layers = [
             nn.Sequential(create_linear_layer(out_size, hid_size), create_activation())
         ]
-        cov_hidden_layers = [
+        dec_hidden_layers = [
             nn.Sequential(create_linear_layer(enc_size+act_size, hid_size), create_activation())
         ]
 
@@ -95,25 +96,30 @@ class DeepKoopman(Ensemble):
                 )
             )
         for i in range(num_layers - 1):
-            cov_hidden_layers.append(
+            dec_hidden_layers.append(
                 nn.Sequential(
                     create_linear_layer(hid_size, hid_size),
                     create_activation(),
                 )
             )
 
+
         self.enc_hidden_layers = nn.Sequential(*enc_hidden_layers)
         self.bic_hidden_layers = nn.Sequential(*bic_hidden_layers)
-        self.cov_hidden_layers = nn.Sequential(*cov_hidden_layers)
+        self.dec_hidden_layers = nn.Sequential(*dec_hidden_layers)
 
-        self.encode_net = create_linear_layer(hid_size, 2 * enc_size)
-        self.bicode_net = create_linear_layer(hid_size, 2 * act_size)
-        self.covariance_net = create_linear_layer(hid_size, out_size)
+        self.encode_net = create_linear_layer(hid_size, enc_size)
+        self.bicode_net = create_linear_layer(hid_size, act_size)
 
-        self.lA = create_linear_layer(koopman, koopman)
-        self.lB = create_linear_layer(act_size, koopman)
-        self.lC = create_linear_layer(enc_size, out_size)
-        self.lD = create_linear_layer(act_size, out_size)
+        if self.deterministic:
+            self.decode_net = create_linear_layer(hid_size, out_size)
+        else:
+            self.decode_net = create_linear_layer(hid_size, 2 * out_size)
+
+        self.lA = create_linear_layer(enc_size+act_size, enc_size+act_size)
+        # self.lB = create_linear_layer(act_size, koopman)
+        # self.lC = create_linear_layer(enc_size, out_size)
+        # self.lD = create_linear_layer(act_size, out_size)
 
         self.apply(truncated_normal_init)
         self.to(self.device)
@@ -131,39 +137,46 @@ class DeepKoopman(Ensemble):
 
     def _encode(self, x: torch.Tensor, dim: int, trajectory: bool = True):
         enc = self.enc_hidden_layers(x)
-        enc = self.encode_net(enc)
+        # enc = self.encode_net(enc)
+
+        return self.encode_net(enc)
 
         x = x if dim == 3 else x.repeat((self.num_members, 1, 1))
 
-        return torch.cat([x, enc], axis=-1)
+        # return torch.cat([x, enc], axis=-1)
 
     def _bicode(self, x: torch.Tensor, u: torch.Tensor):
-        g_x = self.bic_hidden_layers(x[..., :self.out_size])
-        return self.bicode_net(g_x)[..., self.act_size:] * u, self.bicode_net(g_x)[..., :self.act_size] * u
+        g_x = self.bic_hidden_layers(x)
+        return self.bicode_net(g_x) * u
 
-    #TODO: Change logvar for a function, think about input
     def _default_forward(self, x: torch.Tensor, only_elite: bool = False, trajectory = True, **_kwargs) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         x_state = x[..., :self.out_size]
         x_act = x[..., self.out_size:]
+
+        self._maybe_toggle_layers_use_only_elite(only_elite)
 
         dim = x.dim()
         B = x.shape[0] if dim == 2 else x.shape[1]
 
         z_k = self._encode(x_state, dim, trajectory = True)
+        u_k = self._bicode(x_state, x_act)
 
-        z_mean = z_k[..., :self.enc_size+self.out_size]
-        z_logvar = z_k[..., self.enc_size+self.out_size:]
+        mean_and_logvar = self.dec_hidden_layers(torch.cat([z_k, u_k], axis=-1))
 
-        u_mean, u_logvar = self._bicode(z_mean, x_act)
+        mean_and_logvar = self.decode_net(mean_and_logvar)
 
-        mean = self.lA(z_mean) + self.lB(u_mean)
+        self._maybe_toggle_layers_use_only_elite(only_elite)
 
-        logvar = self.lC(z_logvar) + self.lD(u_logvar)
+        if (self.deterministic == True):
+            return mean_and_logvar, None
+        else:
+            mean = mean_and_logvar[..., :self.out_size]
+            logvar = mean_and_logvar[..., self.out_size:]
 
-        logvar = self.max_logvar - F.softplus(self.max_logvar - logvar)
-        logvar = self.min_logvar + F.softplus(logvar - self.min_logvar)
+            logvar = self.max_logvar - F.softplus(self.max_logvar - logvar)
+            logvar = self.min_logvar + F.softplus(logvar - self.min_logvar)
 
-        return mean[..., :self.out_size], logvar
+            return mean, logvar
 
     def forward(  # type: ignore
         self,

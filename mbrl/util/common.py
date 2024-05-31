@@ -111,7 +111,7 @@ def create_one_dim_tr_model(
         no_delta_list=cfg.overrides.get("no_delta_list", None),
         num_elites=cfg.overrides.get("num_elites", None),
     )
-    # model_dir = '/home/faffonso/Documents/mbrl-lib/exp/pets/default/pets_halfcheetah/2024.05.21/004901'
+    # model_dir = '/home/faffonso/Documents/mbrl/mbrl-lib/exp/pets/default/pets_halfcheetah/2024.05.30/affine_prob'
 
     if model_dir:
         dynamics_model.load(model_dir)
